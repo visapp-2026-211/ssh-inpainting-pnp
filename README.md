@@ -1,3 +1,92 @@
+# Plug-and-Play Flow Matching for SSH reconstruction
+
+## Plug-and-Play Flow Matching for SSH Reconstruction
+
+**Algorithm 1: PnP Flow Matching**
+
+With $F(\mathbf{x}_n) = \|\mathbf{Hx}_n - \mathbf{y}\|_2^2$
+
+**Input:**
+- Pre-trained network $v^\theta$ by Flow Matching
+- Time sequence $(t_n)_n$ with $t_n = n/N$ ($N \in \mathbb{N}$) or $\lim_{n\to+\infty} t_n = 1$
+- Adaptive stepsizes $(\gamma_n)_n$
+
+**Initialize:** $x_0 \in \mathbb{R}^d$
+
+**For** $n = 0, 1, \dots$:
+
+1. *Gradient step*  
+   $z_n \gets x_n - \gamma_n \nabla F(x_n)$
+
+2. *Linear interpolation*  
+   $\tilde{z}_n \gets (1 - t_n)\varepsilon + t_n z_n$, where $\varepsilon \sim P_0$
+
+3. *PnP denoiser*  
+   $x_{n+1} \gets D_{t_n}(\tilde{z}_n)$
+
+**Return:** $x_{n+1}$
+
+---
+
+
+## PnP-Flow for Large Images
+
+---
+
+**Algorithm 2: PnP Flow Matching for large images (sliding window)**
+
+**Input:**
+- Pre-trained network $v^\theta$ by Flow Matching on patches of size $H \times W$
+- Time sequence $(t_k)_k$
+- Adaptive stepsize $\gamma$
+- Step size $s$
+- Cut size $c$
+- Input image $x \in \mathbb{R}^{H \times W'}$ where $W' \gg W$
+
+**Initialize:** $x_{\text{next}} \gets \mathbf{0} \in \mathbb{R}^{H \times W'}$
+
+**Note:** PnPFlowStep $v^\theta, x_{\text{patch}}, t, \gamma$ performs one iteration of Algorithm 1 on patch $x_{\text{patch}}$
+
+**For** each time step $t_k$ in $(t_k)_k$:
+
+1. *First window*  
+   $x_{\text{next}}[:, :W] \gets \text{PnPFlowStep}(v^\theta, x[:, :W], t_k, \gamma)$
+
+2. *Middle windows*  
+   $n_{\text{windows}} \gets \lfloor (W' - s) / s \rfloor$  
+   **For** $i = 1, 2, \ldots, n_{\text{windows}} - 1$:
+   - $r_{\text{start}} \gets i \cdot s$, $r_{\text{end}} \gets (i + 1) \cdot s$  
+   - $w_{\text{start}} \gets r_{\text{start}} - c$, $w_{\text{end}} \gets r_{\text{end}} + c$  
+   - $x_{\text{patch}} \gets \text{PnPFlowStep}(v^\theta, x[:, w_{\text{start}}:w_{\text{end}}], t_k, \gamma)$  
+   - $x_{\text{next}}[:, r_{\text{start}}:r_{\text{end}}] \gets x_{\text{patch}}[:, c:-c]$  
+     *Extract center region*
+
+3. *Final window*  
+   $x_{\text{patch}} \gets \text{PnPFlowStep}(v^\theta, x[:, -W:], t_k, \gamma)$  
+   $x_{\text{next}}[:, -s:] \gets x_{\text{patch}}[:, -s:]$
+
+4. *Update*  
+   $x \gets x_{\text{next}}$
+
+**Return:** $x$
+
+---
+
+## Implementation and Computational Considerations
+The practical implementation of PnP-Flow for SSH reconstruction involves several considerations.
+
+**Time Schedule**: we employ a finite-time sequence $t_n = n/N$ with $N = 50$ steps and more, providing a balance between reconstruction quality and computational efficiency. The decreasing time schedule ensures that early iterations focus on recovering large-scale structure, while later iterations refine mesoscale or submesoscale details.
+
+**Adaptive $\gamma_n$  Step Sizes**: the gradient step sizes $\gamma_n$ are adapted based on the Lipschitz constant of the data fidelity term, ensuring convergence stability. For the SSH observation operator, we use $\gamma_n = 0.1 \cdot (1 + 0.1n)^{-1}$ to provide a stronger regularization in early iterations.
+
+**Computational Complexity**: the algorithm requires $O(N \times K)$ evaluations of the velocity network, with $N$ the number of time steps $t$ and $K$ the number of iterations inside denoiser operator $D$. PnP-Flow avoids expensive ODE integration during inference, making it significantly more efficient than traditional flow-based sampling methods while maintaining comparable reconstruction quality.
+
+**Memory Efficiency**: unlike diffusion-based approaches that require storing intermediate noise estimates, PnP-Flow operates with a fixed memory footprint proportional to the patch size, enabling scalable applications to high-resolution SSH fields.
+
+The combination of data-driven generative priors with iterative optimization provides several advantages for SSH inpainting: first, a physically plausible extrapolation in data-sparse regions through learned oceanographic patterns, second, the preservation of observed measurements through explicit data fidelity constraints, and last, a computational efficiency suitable for operational oceanographic applications. Empirical evaluations demonstrate that PnP-Flow achieves superior reconstruction accuracy compared to classical interpolation methods while generating oceanographically consistent mesoscale structures in unobserved regions.
+
+
+
 # Generative Model Validation and Distribution Fidelity
 
 A critical requirement for successful SSH inpainting is ensuring that the Flow Matching model has learned the true data distribution $p_{\text{data}}(\mathbf{x})$ of SSH fields. Poor distribution matching can lead to generated samples that exhibit unrealistic oceanographic features, incorrect energy spectra, or biased statistical properties that compromise reconstruction quality.
@@ -125,3 +214,9 @@ This multifaceted approach provides robust validation by detecting subtle margin
 # Reference
 
 **[He et al., 2016]** Deep Residual Learning for Image Recognition, *Kaiming He and Xiangyu Zhang and Shaoqing Ren and Jian Sun*, Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2016, pages 770-778, https://openaccess.thecvf.com/content_cvpr_2016/html/He_Deep_Residual_Learning_CVPR_2016_paper.html
+
+**[Venkatakrishnan et al., 2013]** Plug-and-play priors for model based reconstruction, *Venkatakrishnan S. V., Bouman, C. A., and Wohlberg, B.*.  In 2013 IEEE Global Conference on Signal and Information Processing, pages 945–948
+
+**[Meinhardt et al., 2017]** Learning proximal operators: Using denoising networks for regularizing inverse imaging problems. *Meinhardt, T., Moeller, M., Hazirbas, C., and Cremers, D.* In 2017 IEEE International Conference on Computer Vision (ICCV), page 1799–1808. IEEE.
+
+**[Lipman et al., 2023]** Flow matching for generative modelin *Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M., and Le, M.*. In 2023 Proceedings of the International Conference on Learning Representations (ICLR) .
